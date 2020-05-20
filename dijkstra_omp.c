@@ -16,6 +16,8 @@
 #define a(R,C) a[ROWMJR(R,C,ln,n)]
 #define b(R,C) b[ROWMJR(R,C,nn,n)]
 
+int num_threads;
+
 static void load(
   char const * const filename,
   int * const np,
@@ -172,13 +174,19 @@ int main(int argc, char ** argv)
   clock_t ts, te;
   float * a, * l;
 
-  if(argc < 4){
-     printf("Invalid number of arguments.\nUsage: dijkstra <graph> <source> <output_file>.\n");
+  if(argc < 5){
+     printf("Invalid number of arguments.\nUsage: dijkstra <graph> <source> <output_file> <num_threads>.\n");
      return EXIT_FAILURE;
   }
 
-
+  num_threads = atoi(argv[4]);
   load(argv[1], &n, &a); //(input name, total nodes count, graph)
+  // printf("%d, %d, %d\n", n, omp_get_num_threads(), (n % omp_get_num_threads()));
+  if((n % num_threads) > 0){
+     printf("Invalid number of threads.\n");
+     return EXIT_FAILURE;
+  }
+  omp_set_num_threads(num_threads);
 
   ts = clock();
   dijkstra(atoi(argv[2]), n, a, &l); //(source, total nodes count, graph, output array)
