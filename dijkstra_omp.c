@@ -8,6 +8,7 @@
 #include <stdlib.h>
 /* time, CLOCKS_PER_SEC */
 #include <time.h>
+#include <omp.h>
 
 #define ROWMJR(R,C,NR,NC) (R*NC+C)
 #define COLMJR(R,C,NR,NC) (C*NR+R)
@@ -15,8 +16,7 @@
 #define a(R,C) a[ROWMJR(R,C,ln,n)]
 #define b(R,C) b[ROWMJR(R,C,nn,n)]
 
-static void
-load(
+static void load(
   char const * const filename,
   int * const np,
   float ** const ap
@@ -55,51 +55,82 @@ load(
   *ap = a;
 }
 
-static void
-dijkstra(
+
+static void dijkstra(
   int const s,
   int const n,
   float const * const a,
   float ** const lp
-)
+)//(source, total nodes count, graph, output array)
 {
-  int i, j;
-  struct float_int {
-    float l;
-    int u;
-  } min;
-  char * m;
+  int nth, chunk, mv, k;
+  float md;
+  int * m;
   float * l;
 
-  m = calloc(n, sizeof(*m));
+  m = calloc(n, sizeof(*m)); // visited nodes
   assert(m);
 
   l = malloc(n*sizeof(*l));
   assert(l);
 
-  for (i=0; i<n; ++i) {
-    l[i] = a(i,s);
+  for (k=0; k<n; ++k) {
+    l[k] = a(k,s); //init path from source; including direct path and inf
   }
 
-  m[s] = 1;
-  min.u = -1; /* avoid compiler warning */
+  #pragma omp parallel shared(mv, md)
+  {
+    int i, j;
+    struct float_int {
+      float l;
+      int u;
+    } min;
+    int startv,endv, me = omp_get_thread_num();  // my thread number
 
-  for (i=1; i<n; ++i) {
-    min.l = INFINITY;
-
-    /* find local minimum */
-    for (j=0; j<n; ++j) {
-      if (!m[j] && l[j] < min.l) {
-        min.l = l[j];
-        min.u = j;
-      }
+    #pragma omp single
+    {  
+      nth = omp_get_num_threads();  
+      chunk = n/nth;  
+      printf("there are %d threads\n",nth);  
     }
 
-    m[min.u] = 1;
+    startv = me * chunk;
+    endv = startv + chunk - 1;
+    #pragma omp single
+    {
+    m[s] = 1; // visited source nodes
+    }
 
-    for (j=0; j<n; ++j) {
-      if (!m[j] && min.l+a(j,min.u) < l[j])
-        l[j] = min.l+a(j,min.u);
+    min.u = -1; /* avoid compiler warning */
+
+    for (i=0; i<n; ++i) {
+      #pragma omp single 
+      {  md = INFINITY; mv = 0;  }
+
+      /* find local minimum */
+      min.l = INFINITY;
+      for (j=startv; j<=endv; ++j) {
+        if (!m[j] && l[j] < min.l) { //the node is not visited and its min d so far is the smallest
+          min.l = l[j];
+          min.u = j;
+        }
+      }
+
+      #pragma omp critical
+      {  if (min.l < md)  
+        {  md = min.l; mv = min.u;  }
+      }
+      #pragma omp barrier
+
+      // mark new vertex as done 
+      #pragma omp single 
+      {  m[mv] = 1;  }
+
+      for (j=startv; j<=endv; j++) {
+        if (!m[j] && md+a(j,mv) < l[j])
+          l[j] = md+a(j,mv);
+      }
+      #pragma omp barrier 
     }
   }
 
@@ -108,14 +139,12 @@ dijkstra(
   *lp = l;
 }
 
-static void
-print_time(double const seconds)
+static void print_time(double const seconds)
 {
   printf("Search Time: %0.06fs\n", seconds);
 }
 
-static void
-print_numbers(
+static void print_numbers(
   char const * const filename,
   int const n,
   float const * const numbers)
@@ -137,8 +166,7 @@ print_numbers(
   fclose(fout);
 }
 
-int
-main(int argc, char ** argv)
+int main(int argc, char ** argv)
 {
   int n;
   clock_t ts, te;
@@ -150,10 +178,10 @@ main(int argc, char ** argv)
   }
 
 
-  load(argv[1], &n, &a);
+  load(argv[1], &n, &a); //(input name, total nodes count, graph)
 
   ts = clock();
-  dijkstra(atoi(argv[2]), n, a, &l);
+  dijkstra(atoi(argv[2]), n, a, &l); //(source, total nodes count, graph, output array)
   te = clock();
 
   print_time((double)(te-ts)/CLOCKS_PER_SEC);
